@@ -10,8 +10,10 @@ from re import compile
 import time
 import logging
 
+
 class SomethingIsWrongWithCamera(Exception):
     pass
+
 
 class DVRIPCam(object):
     DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -99,7 +101,9 @@ class DVRIPCam(object):
         self.ip = ip
         self.user = kwargs.get("user", "admin")
         hash_pass = kwargs.get("hash_pass")
-        self.hash_pass = kwargs.get("hash_pass", self.sofia_hash(kwargs.get("password", "")))
+        self.hash_pass = kwargs.get(
+            "hash_pass", self.sofia_hash(kwargs.get("password", ""))
+        )
         self.proto = kwargs.get("proto", "tcp")
         self.port = kwargs.get("port", self.PORTS.get(self.proto))
         self.socket = None
@@ -137,7 +141,7 @@ class DVRIPCam(object):
             self.timeout = timeout
             self.socket.settimeout(timeout)
         except OSError:
-            raise SomethingIsWrongWithCamera('Cannot connect to camera')
+            raise SomethingIsWrongWithCamera("Cannot connect to camera")
 
     def close(self):
         try:
@@ -191,6 +195,53 @@ class DVRIPCam(object):
         self.logger.debug("<= %s", data)
         reply = json.loads(data[:-2])
         return reply
+
+    def send_download(self, version, msg, data={}, wait_response=True):
+        if self.socket is None:
+            return {"Ret": 101}
+        # self.busy.wait()
+        self.busy.acquire()
+        if hasattr(data, "__iter__"):
+            if version == 1:
+                data["SessionID"] = f"{self.session:#0{12}x}"
+            data = bytes(
+                json.dumps(data, ensure_ascii=False, separators=(",", ":")), "utf-8"
+            )
+
+        tail = b"\x00"
+        if version == 0:
+            tail = b"\x0a" + tail
+        pkt = (
+            struct.pack(
+                "BB2xII2xHI",
+                255,
+                version,
+                self.session,
+                self.packet_count,
+                msg,
+                len(data) + len(tail),
+            )
+            + data
+            + tail
+        )
+        self.logger.debug("=> %s", pkt)
+        self.socket_send(pkt)
+        if wait_response:
+            reply = {"Ret": 101}
+            data = self.socket_recv(20)
+            if data is None or len(data) < 20:
+                return None
+            (
+                head,
+                version,
+                self.session,
+                sequence_number,
+                msgid,
+                len_data,
+            ) = struct.unpack("BB2xII2xHI", data)
+            reply = self.get_file()
+            self.busy.release()
+            return reply
 
     def send(self, msg, data={}, wait_response=True):
         if self.socket is None:
@@ -304,7 +355,10 @@ class DVRIPCam(object):
     def delGroup(self, name):
         data = self.send(
             self.QCODES["DelGroup"],
-            {"Name": name, "SessionID": "0x%08X" % self.session,},
+            {
+                "Name": name,
+                "SessionID": "0x%08X" % self.session,
+            },
         )
         return data["Ret"] in self.OK_CODES
 
@@ -373,7 +427,10 @@ class DVRIPCam(object):
     def delUser(self, name):
         data = self.send(
             self.QCODES["DelUser"],
-            {"Name": name, "SessionID": "0x%08X" % self.session,},
+            {
+                "Name": name,
+                "SessionID": "0x%08X" % self.session,
+            },
         )
         return data["Ret"] in self.OK_CODES
 
@@ -469,7 +526,8 @@ class DVRIPCam(object):
 
     def set_remote_alarm(self, state):
         self.set_command(
-            "OPNetAlarm", {"Event": 0, "State": state},
+            "OPNetAlarm",
+            {"Event": 0, "State": state},
         )
 
     def keep_alive(self):
@@ -486,12 +544,14 @@ class DVRIPCam(object):
 
     def keyDown(self, key):
         self.set_command(
-            "OPNetKeyboard", {"Status": "KeyDown", "Value": key},
+            "OPNetKeyboard",
+            {"Status": "KeyDown", "Value": key},
         )
 
     def keyUp(self, key):
         self.set_command(
-            "OPNetKeyboard", {"Status": "KeyUp", "Value": key},
+            "OPNetKeyboard",
+            {"Status": "KeyUp", "Value": key},
         )
 
     def keyPress(self, key):
@@ -539,7 +599,8 @@ class DVRIPCam(object):
             "Tour": 1 if "Tour" in cmd else 0,
         }
         return self.set_command(
-            "OPPTZControl", {"Command": cmd, "Parameter": ptz_param},
+            "OPPTZControl",
+            {"Command": cmd, "Parameter": ptz_param},
         )
 
     def set_info(self, command, data):
@@ -607,8 +668,8 @@ class DVRIPCam(object):
     def get_encode_info(self, default_config=False):
         """Request data for 'Simplify.Encode' from the target DVRIP device.
 
-            Arguments:
-            default_config -- returns the default values for the type if True
+        Arguments:
+        default_config -- returns the default values for the type if True
         """
         if default_config:
             code = 1044
@@ -694,6 +755,32 @@ class DVRIPCam(object):
                 return data
             vprint(f"Upgraded {data['Ret']}%")
 
+    def get_file(self):
+        # recorded with 15 (0x0F) fps
+
+        buf = bytearray()
+        data = self.receive_with_timeout(16)
+        (
+            static,
+            dyn1,
+            dyn2,
+            len_data,
+        ) = struct.unpack("IIII", data)
+        file_length = len_data
+
+        data = self.receive_with_timeout(8176)
+        buf.extend(data)
+
+        while True:
+            header = self.receive_with_timeout(20)
+            len_data = struct.unpack("I", header[16:])[0]
+
+            if len_data == 0:
+                return buf
+
+            data = self.receive_with_timeout(len_data)
+            buf.extend(data)
+
     def reassemble_bin_payload(self, metadata={}):
         def internal_to_type(data_type, value):
             if data_type == 0x1FC or data_type == 0x1FD:
@@ -746,9 +833,14 @@ class DVRIPCam(object):
                 (data_type,) = struct.unpack(">I", packet[:4])
                 if data_type == 0x1FC or data_type == 0x1FE:
                     frame_len = 16
-                    (media, metadata["fps"], w, h, dt, length,) = struct.unpack(
-                        "BBBBII", packet[4:frame_len]
-                    )
+                    (
+                        media,
+                        metadata["fps"],
+                        w,
+                        h,
+                        dt,
+                        length,
+                    ) = struct.unpack("BBBBII", packet[4:frame_len])
                     metadata["width"] = w * 8
                     metadata["height"] = h * 8
                     metadata["datetime"] = internal_to_datetime(dt)
