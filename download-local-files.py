@@ -3,17 +3,22 @@ from dvrip import SomethingIsWrongWithCamera
 from pathlib import Path
 import subprocess
 from time import sleep
+import os
 
-host_ip = "your-ip"
-user = "user"
-password = "password"
+host_ip = os.environ.get("IP_ADDRESS")
+user = os.environ.get("USER")
+password = os.environ.get("PASSWORD")
+
+if host_ip == "" or user == "":
+    print("Please provide the username and ip address")
+    exit(1)
 
 cam = DVRIPCam(host_ip, user=user, password=password)
 
 
 def login():
     if cam.login():
-        print("Success! Connected to " + host_ip)
+        print(f"Success! Connected to {host_ip}")
     else:
         print("Failure. Could not connect.")
 
@@ -261,49 +266,112 @@ def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2
             sleep(sleepTime)
 
 
-convertTo = "mp4"
-downloadDir = "downloads"
-start = "2023-04-01 00:00:00"
-end = "2023-07-01 23:59:59"
+def download_all():
+    convertTo = os.environ.get("MOVIE_TARGET_FORMAT")
+    downloadDir = os.environ.get("DOWNLOAD_DIR")
+    start = os.environ.get("DOWNLOAD_START_TIME")
+    end = os.environ.get("DOWNLOAD_END_TIME")
 
-login()
+    if convertTo == None or downloadDir == None or start == None or end == None:
+        print("Please provide the username and ip address")
+        exit(1)
 
-ptz_step("DirectionUp")
+    login()
 
-videos = list_local_files(start, end, "h264")
-pictures = list_local_files(start, end, "jpg")
+    videos = list_local_files(start, end, "h264")
+    pictures = list_local_files(start, end, "jpg")
 
-Path(downloadDir).mkdir(parents=True, exist_ok=True)
+    Path(downloadDir).mkdir(parents=True, exist_ok=True)
 
-for file in videos:
-    targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
-    targetFilePathConvert = generateTargetFilePath(
-        file["FileName"], downloadDir, extention=".mp4"
-    )
+    for file in videos:
+        targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
+        targetFilePathConvert = generateTargetFilePath(
+            file["FileName"], downloadDir, extention=f"{convertTo}"
+        )
 
-    if Path(f"{targetFilePath}").is_file():
-        print(f"File already exists: {targetFilePath}")
-        continue
+        if Path(f"{targetFilePath}").is_file():
+            print(f"File already exists: {targetFilePath}")
+            continue
 
-    if Path(f"{targetFilePathConvert}").is_file():
-        print(f"Converted file already exists: {targetFilePathConvert}")
-        continue
+        if Path(f"{targetFilePathConvert}").is_file():
+            print(f"Converted file already exists: {targetFilePathConvert}")
+            continue
 
-    downloadWithDisconnect(
-        file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
-    )
+        downloadWithDisconnect(
+            file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
+        )
 
-    convertFile(targetFilePath, targetFilePathConvert)
+        convertFile(targetFilePath, targetFilePathConvert)
 
-for file in pictures:
-    targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
+    for file in pictures:
+        targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
 
-    if Path(f"{targetFilePath}").is_file():
-        print(f"File already exists: {targetFilePath}")
-        continue
+        if Path(f"{targetFilePath}").is_file():
+            print(f"File already exists: {targetFilePath}")
+            continue
 
-    downloadWithDisconnect(
-        file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
-    )
+        downloadWithDisconnect(
+            file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
+        )
 
-cam.close()
+    cam.close()
+
+
+def move_cam():
+    login()
+    direction = os.environ.get("DIRECTION")
+    speed = os.environ.get("SPEED")
+
+    if direction not in [
+        "DirectionUp",
+        "DirectionDown",
+        "DirectionRight",
+        "DirectionLeft",
+    ]:
+        exit("Please provide direction.")
+
+    if speed == None:
+        speed = 5
+    else:
+        speed = int(speed)
+    ptz_step("DirectionUp", step=speed)
+
+
+def main():
+    action = os.environ.get("ACTION")
+    if action not in ["download", "move"]:
+        print("Please provide an action")
+        exit(1)
+
+    for i in range(10):
+        try:
+            print("Try login")
+            login()
+            break
+        except Exception:
+            print("Camera offline")
+            cam.close()
+
+        if i == 9:
+            exit(1)
+        sleep(2)
+
+    if action == "download":
+        download_all()
+
+    if action == "move":
+        move_cam()
+
+
+if __name__ == "__main__":
+    main()
+
+#    cam.send(
+#        1040,
+#        {
+#            "fVideo.Volume": [
+#                {"AudioMode": "Single", "LeftVolume": 0, "RightVolume": 0}
+#            ],
+#            "Name": "fVideo.Volume",
+#        },
+#    )
