@@ -267,12 +267,13 @@ def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2
 
 
 def download_all():
-    convertTo = os.environ.get("MOVIE_TARGET_FORMAT")
-    downloadDir = os.environ.get("DOWNLOAD_DIR")
+    convertTo = os.environ.get("VIDEO_TARGET_FORMAT")
+    downloadDirVideo = os.environ.get("DOWNLOAD_DIR_VIDEO")
+    downloadDirPicture = os.environ.get("DOWNLOAD_DIR_PICTURE")
     start = os.environ.get("DOWNLOAD_START_TIME")
     end = os.environ.get("DOWNLOAD_END_TIME")
 
-    if convertTo == None or downloadDir == None or start == None or end == None:
+    if convertTo == None or downloadDirVideo == None or start == None or end == None:
         print("Please provide the username and ip address")
         exit(1)
 
@@ -281,12 +282,13 @@ def download_all():
     videos = list_local_files(start, end, "h264")
     pictures = list_local_files(start, end, "jpg")
 
-    Path(downloadDir).mkdir(parents=True, exist_ok=True)
+    Path(downloadDirVideo).mkdir(parents=True, exist_ok=True)
+    print("Start downloading videos...")
 
     for file in videos:
-        targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
+        targetFilePath = generateTargetFilePath(file["FileName"], downloadDirVideo)
         targetFilePathConvert = generateTargetFilePath(
-            file["FileName"], downloadDir, extention=f"{convertTo}"
+            file["FileName"], downloadDirVideo, extention=f"{convertTo}"
         )
 
         if Path(f"{targetFilePath}").is_file():
@@ -302,9 +304,12 @@ def download_all():
         )
 
         convertFile(targetFilePath, targetFilePathConvert)
+    print("Finish downloading videos.")
 
+    Path(downloadDirPicture).mkdir(parents=True, exist_ok=True)
+    print("Start downloading pictures...")
     for file in pictures:
-        targetFilePath = generateTargetFilePath(file["FileName"], downloadDir)
+        targetFilePath = generateTargetFilePath(file["FileName"], downloadDirPicture)
 
         if Path(f"{targetFilePath}").is_file():
             print(f"File already exists: {targetFilePath}")
@@ -315,6 +320,7 @@ def download_all():
         )
 
     cam.close()
+    print("Finish downloading pictures.")
 
 
 def move_cam():
