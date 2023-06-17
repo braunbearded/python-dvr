@@ -274,7 +274,7 @@ def download_all():
     end = os.environ.get("DOWNLOAD_END_TIME")
 
     if convertTo == None or downloadDirVideo == None or start == None or end == None:
-        print("Please provide the username and ip address")
+        print("Please provide download settings")
         exit(1)
 
     login()
