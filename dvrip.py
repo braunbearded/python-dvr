@@ -9,6 +9,7 @@ from datetime import *
 from re import compile
 import time
 import logging
+from pathlib import Path
 
 
 class SomethingIsWrongWithCamera(Exception):
@@ -912,3 +913,209 @@ class DVRIPCam(object):
 
     def stop_monitor(self):
         self.monitoring = False
+
+    def list_local_files(self, startTime, endTime, filetype):
+        # 1440 OPFileQuery
+        result = []
+        data = self.send(
+            1440,
+            {
+                "Name": "OPFileQuery",
+                "OPFileQuery": {
+                    "BeginTime": startTime,
+                    "Channel": 0,
+                    "DriverTypeMask": "0x0000FFFF",
+                    "EndTime": endTime,
+                    "Event": "*",
+                    "StreamType": "0x00000000",
+                    "Type": filetype,
+                },
+            },
+        )
+
+        if data == None or data["Ret"] != 100:
+            print("Could not get files.")
+            raise ConnectionRefusedError("Could not get files")
+
+        # When no file can be found for the query OPFileQuery is None
+        if data["OPFileQuery"] == None:
+            print(f"No files found for this range. Start: {startTime}, End: {endTime}")
+            return []
+
+        # OPFileQuery only returns the first 64 items
+        # we therefore need to add the results to a list, modify the starttime with the begintime value of the last item we received and query again
+        # max number of results are 511
+        result = data["OPFileQuery"]
+
+        max_event = {"status": "init", "last_num_results": 0}
+        while max_event["status"] == "init" or max_event["status"] == "limit":
+            if max_event["status"] == "init":
+                max_event["status"] = "run"
+            while len(data["OPFileQuery"]) == 64 or max_event["status"] == "limit":
+                newStartTime = data["OPFileQuery"][-1]["BeginTime"]
+                data = self.send(
+                    1440,
+                    {
+                        "Name": "OPFileQuery",
+                        "OPFileQuery": {
+                            "BeginTime": newStartTime,
+                            "Channel": 0,
+                            "DriverTypeMask": "0x0000FFFF",
+                            "EndTime": endTime,
+                            "Event": "*",
+                            "StreamType": "0x00000000",
+                            "Type": filetype,
+                        },
+                    },
+                )
+                result += data["OPFileQuery"]
+                max_event["status"] = "run"
+
+            if len(result) % 511 == 0 or max_event["status"] == "limit":
+                print("Max number of events reached...")
+                if len(result) == max_event["last_num_results"]:
+                    print("No new events since last run. All events queried")
+                    return result
+
+                max_event["status"] = "limit"
+                max_event["last_num_results"] = len(result)
+
+        print(f"Found {len(result)} files.")
+        return result
+
+    def ptz_step(self, cmd, step=5):
+        # To do a single step the first message will just send a tilt command which last forever
+        # the second command will stop the tilt movement
+        # that means if second message does not arrive for some reason the camera will be keep moving in that direction forever
+
+        parms_start = {
+            "AUX": {"Number": 0, "Status": "On"},
+            "Channel": 0,
+            "MenuOpts": "Enter",
+            "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
+            "Pattern": "SetBegin",
+            "Preset": 65535,
+            "Step": step,
+            "Tour": 0,
+        }
+
+        self.set_command("OPPTZControl", {"Command": cmd, "Parameter": parms_start})
+
+        parms_end = {
+            "AUX": {"Number": 0, "Status": "On"},
+            "Channel": 0,
+            "MenuOpts": "Enter",
+            "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
+            "Pattern": "SetBegin",
+            "Preset": -1,
+            "Step": step,
+            "Tour": 0,
+        }
+
+        self.set_command("OPPTZControl", {"Command": cmd, "Parameter": parms_end})
+
+    def download_file(
+        self, startTime, endTime, filename, targetFilePath, download=True
+    ):
+        Path(targetFilePath).parent.mkdir(parents=True, exist_ok=True)
+
+        print(f"Downloading: {targetFilePath}")
+
+        self.send(
+            1424,
+            {
+                "Name": "OPPlayBack",
+                "OPPlayBack": {
+                    "Action": "Claim",
+                    "Parameter": {
+                        "PlayMode": "ByName",
+                        "FileName": filename,
+                        "StreamType": 0,
+                        "Value": 0,
+                        "TransMode": "TCP",
+                        # Maybe IntelligentPlayBack is needed in some edge case
+                        # "IntelligentPlayBackEvent": "",
+                        # "IntelligentPlayBackSpeed": 2031619,
+                    },
+                    "StartTime": startTime,
+                    "EndTime": endTime,
+                },
+            },
+        )
+
+        actionStart = "Start"
+        if download:
+            actionStart = f"Download{actionStart}"
+
+        data = self.send_download(
+            0,
+            1420,
+            {
+                "Name": "OPPlayBack",
+                "OPPlayBack": {
+                    "Action": actionStart,
+                    "Parameter": {
+                        "PlayMode": "ByName",
+                        "FileName": filename,
+                        "StreamType": 0,
+                        "Value": 0,
+                        "TransMode": "TCP",
+                        # Maybe IntelligentPlayBack is needed in some edge case
+                        # "IntelligentPlayBackEvent": "",
+                        # "IntelligentPlayBackSpeed": 0,
+                    },
+                    "StartTime": startTime,
+                    "EndTime": endTime,
+                },
+            },
+        )
+
+        try:
+            with open(targetFilePath, "wb") as bin_data:
+                bin_data.write(data)
+        except TypeError as e:
+            Path(targetFilePath).unlink(missing_ok=True)
+            print(f"An error occured while downloading {targetFilePath}")
+            return e
+
+        print(f"File successfully downloaded: {targetFilePath}")
+
+        actionStop = "Stop"
+        if download:
+            actionStop = f"Download{actionStop}"
+
+        self.send(
+            1420,
+            {
+                "Name": "OPPlayBack",
+                "OPPlayBack": {
+                    "Action": actionStop,
+                    "Parameter": {
+                        "FileName": filename,
+                        "PlayMode": "ByName",
+                        "StreamType": 0,
+                        "TransMode": "TCP",
+                        "Channel": 0,
+                        "Value": 0,
+                        # Maybe IntelligentPlayBack is needed in some edge case
+                        # "IntelligentPlayBackEvent": "",
+                        # "IntelligentPlayBackSpeed": 0,
+                    },
+                    "StartTime": startTime,
+                    "EndTime": endTime,
+                },
+            },
+        )
+        return None
+
+    def get_battery(self):
+        data = self.send(
+            1040,
+            {
+                "fVideo.Volume": [
+                    {"AudioMode": "Single", "LeftVolume": 0, "RightVolume": 0}
+                ],
+                "Name": "fVideo.Volume",
+            },
+        )
+        return data

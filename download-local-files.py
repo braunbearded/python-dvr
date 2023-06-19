@@ -1,16 +1,28 @@
-from dvrip import DVRIPCam
-from dvrip import SomethingIsWrongWithCamera
+from dvrip import DVRIPCam, SomethingIsWrongWithCamera
 from pathlib import Path
 import subprocess
-from time import sleep
+from time import sleep, localtime, strftime
 import os
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+
+def init_logger():
+    logger.setLevel(logging.DEBUG)
+    ch = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
 
 host_ip = os.environ.get("IP_ADDRESS")
 user = os.environ.get("USER")
 password = os.environ.get("PASSWORD")
 
 if host_ip == "" or user == "":
-    print("Please provide the username and ip address")
+    logger.debug("Please provide the username and ip address")
     exit(1)
 
 cam = DVRIPCam(host_ip, user=user, password=password)
@@ -18,188 +30,9 @@ cam = DVRIPCam(host_ip, user=user, password=password)
 
 def login():
     if cam.login():
-        print(f"Success! Connected to {host_ip}")
+        logger.debug(f"Success! Connected to {host_ip}")
     else:
-        print("Failure. Could not connect.")
-
-
-def ptz_step(cmd, step=5):
-    # To do a single step the first message will just send a tilt command which last forever
-    # the second command will stop the tilt movement
-    # that means if second message does not arrive for some reason the camera will be keep moving in that direction forever
-
-    parms_start = {
-        "AUX": {"Number": 0, "Status": "On"},
-        "Channel": 0,
-        "MenuOpts": "Enter",
-        "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
-        "Pattern": "SetBegin",
-        "Preset": 65535,
-        "Step": step,
-        "Tour": 0,
-    }
-
-    cam.set_command("OPPTZControl", {"Command": cmd, "Parameter": parms_start})
-
-    parms_end = {
-        "AUX": {"Number": 0, "Status": "On"},
-        "Channel": 0,
-        "MenuOpts": "Enter",
-        "POINT": {"bottom": 0, "left": 0, "right": 0, "top": 0},
-        "Pattern": "SetBegin",
-        "Preset": -1,
-        "Step": step,
-        "Tour": 0,
-    }
-
-    cam.set_command("OPPTZControl", {"Command": cmd, "Parameter": parms_end})
-
-
-def list_local_files(startTime, endTime, filetype):
-    # 1440 OPFileQuery
-    result = []
-    data = cam.send(
-        1440,
-        {
-            "Name": "OPFileQuery",
-            "OPFileQuery": {
-                "BeginTime": startTime,
-                "Channel": 0,
-                "DriverTypeMask": "0x0000FFFF",
-                "EndTime": endTime,
-                "Event": "*",
-                "StreamType": "0x00000000",
-                "Type": filetype,
-            },
-        },
-    )
-
-    if data == None or data["Ret"] != 100:
-        print("Could not get files.")
-        raise ConnectionRefusedError("Could not get files")
-
-    # When no file can be found for the query OPFileQuery is None
-    if data["OPFileQuery"] == None:
-        print(f"No files found for this range. Start: {startTime}, End: {endTime}")
-        return []
-
-    # OPFileQuery only returns the first 64 items
-    # we therefore need to add the results to a list, modify the starttime with the begintime value of the last item we received and query again
-    result = data["OPFileQuery"]
-    while len(data["OPFileQuery"]) == 64:
-        newStartTime = data["OPFileQuery"][-1]["BeginTime"]
-        data = cam.send(
-            1440,
-            {
-                "Name": "OPFileQuery",
-                "OPFileQuery": {
-                    "BeginTime": newStartTime,
-                    "Channel": 0,
-                    "DriverTypeMask": "0x0000FFFF",
-                    "EndTime": endTime,
-                    "Event": "*",
-                    "StreamType": "0x00000000",
-                    "Type": filetype,
-                },
-            },
-        )
-        result += data["OPFileQuery"]
-
-    print(f"Found {len(result)} files.")
-    return result
-
-
-def download_file(startTime, endTime, filename, targetFilePath, download=True):
-    Path(targetFilePath).parent.mkdir(parents=True, exist_ok=True)
-
-    print(f"Downloading: {targetFilePath}")
-
-    cam.send(
-        1424,
-        {
-            "Name": "OPPlayBack",
-            "OPPlayBack": {
-                "Action": "Claim",
-                "Parameter": {
-                    "PlayMode": "ByName",
-                    "FileName": filename,
-                    "StreamType": 0,
-                    "Value": 0,
-                    "TransMode": "TCP",
-                    # Maybe IntelligentPlayBack is needed in some edge case
-                    # "IntelligentPlayBackEvent": "",
-                    # "IntelligentPlayBackSpeed": 2031619,
-                },
-                "StartTime": startTime,
-                "EndTime": endTime,
-            },
-        },
-    )
-
-    actionStart = "Start"
-    if download:
-        actionStart = f"Download{actionStart}"
-
-    data = cam.send_download(
-        0,
-        1420,
-        {
-            "Name": "OPPlayBack",
-            "OPPlayBack": {
-                "Action": actionStart,
-                "Parameter": {
-                    "PlayMode": "ByName",
-                    "FileName": filename,
-                    "StreamType": 0,
-                    "Value": 0,
-                    "TransMode": "TCP",
-                    # Maybe IntelligentPlayBack is needed in some edge case
-                    # "IntelligentPlayBackEvent": "",
-                    # "IntelligentPlayBackSpeed": 0,
-                },
-                "StartTime": startTime,
-                "EndTime": endTime,
-            },
-        },
-    )
-
-    try:
-        with open(targetFilePath, "wb") as bin_data:
-            bin_data.write(data)
-    except TypeError as e:
-        Path(targetFilePath).unlink(missing_ok=True)
-        print(f"An error occured while downloading {targetFilePath}")
-        return e
-
-    print(f"File successfully downloaded: {targetFilePath}")
-
-    actionStop = "Stop"
-    if download:
-        actionStop = f"Download{actionStop}"
-
-    cam.send(
-        1420,
-        {
-            "Name": "OPPlayBack",
-            "OPPlayBack": {
-                "Action": actionStop,
-                "Parameter": {
-                    "FileName": filename,
-                    "PlayMode": "ByName",
-                    "StreamType": 0,
-                    "TransMode": "TCP",
-                    "Channel": 0,
-                    "Value": 0,
-                    # Maybe IntelligentPlayBack is needed in some edge case
-                    # "IntelligentPlayBackEvent": "",
-                    # "IntelligentPlayBackSpeed": 0,
-                },
-                "StartTime": startTime,
-                "EndTime": endTime,
-            },
-        },
-    )
-    return None
+        logger.debug("Failure. Could not connect.")
 
 
 def generateTargetFilePath(filename, downloadDir, extention=""):
@@ -232,11 +65,11 @@ def convertFile(sourceFile, targetFile):
         ).returncode
         != 0
     ):
-        print(f"Error converting video. Check {sourceFile}")
+        logger.debug(f"Error converting video. Check {sourceFile}")
 
-    print(f"File successfully converted: {targetFile}")
+    logger.debug(f"File successfully converted: {targetFile}")
     Path(sourceFile).unlink()
-    print(f"Orginal file successfully deleted: {sourceFile}")
+    logger.debug(f"Orginal file successfully deleted: {sourceFile}")
 
 
 def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2):
@@ -244,7 +77,7 @@ def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2
     # Camera disconnects after a couple of minutes
     while True:
         if (
-            download_file(
+            cam.download_file(
                 beginTime,
                 endTime,
                 filename,
@@ -255,14 +88,14 @@ def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2
         ):
             break
 
-        print(f"Camera disconnected. Retring in {sleepTime} seconds...")
+        logger.debug(f"Camera disconnected. Retring in {sleepTime} seconds...")
         cam.close()
         cam = DVRIPCam(host_ip, user=user, password=password)
         sleep(sleepTime)
         try:
             login()
         except SomethingIsWrongWithCamera:
-            print(f"Login failed. Retring in {sleepTime} seconds...")
+            logger.debug(f"Login failed. Retring in {sleepTime} seconds...")
             sleep(sleepTime)
 
 
@@ -272,18 +105,39 @@ def download_all():
     downloadDirPicture = os.environ.get("DOWNLOAD_DIR_PICTURE")
     start = os.environ.get("DOWNLOAD_START_TIME")
     end = os.environ.get("DOWNLOAD_END_TIME")
+    blacklistPath = os.environ.get("BLACKLIST_PATH")
+    blacklist = []
+
+    Path(blacklistPath).parent.mkdir(parents=True, exist_ok=True)
+    if not Path(blacklistPath).exists():
+        with open(blacklistPath, "w") as filehandle:
+            json.dump(blacklist, filehandle)
+
+    with open(blacklistPath, "r") as filehandle:
+        blacklist = json.load(filehandle)
 
     if convertTo == None or downloadDirVideo == None or start == None or end == None:
-        print("Please provide download settings")
+        logger.debug("Please provide download settings")
         exit(1)
 
     login()
 
-    videos = list_local_files(start, end, "h264")
-    pictures = list_local_files(start, end, "jpg")
+    videos = []
+    pictures = []
+    for i in range(10):
+        try:
+            videos = cam.list_local_files(start, end, "h264")
+            pictures = cam.list_local_files(start, end, "jpg")
+            break
+        except ConnectionRefusedError:
+            logger.debug("Couldnt get file list")
+
+        if i == 9:
+            logger.debug("Couldnt get file list after 10 attemps...exiting")
+            exit(1)
 
     Path(downloadDirVideo).mkdir(parents=True, exist_ok=True)
-    print("Start downloading videos...")
+    logger.debug(f"Start downloading videos")
 
     for file in videos:
         targetFilePath = generateTargetFilePath(file["FileName"], downloadDirVideo)
@@ -292,11 +146,17 @@ def download_all():
         )
 
         if Path(f"{targetFilePath}").is_file():
-            print(f"File already exists: {targetFilePath}")
+            logger.debug(f"File already exists: {targetFilePath}")
             continue
 
         if Path(f"{targetFilePathConvert}").is_file():
-            print(f"Converted file already exists: {targetFilePathConvert}")
+            logger.debug(f"Converted file already exists: {targetFilePathConvert}")
+            continue
+
+        if targetFilePath in blacklist or targetFilePathConvert in blacklist:
+            logger.debug(
+                f"File is on the blacklist: {targetFilePath}, {targetFilePathConvert}"
+            )
             continue
 
         downloadWithDisconnect(
@@ -304,15 +164,19 @@ def download_all():
         )
 
         convertFile(targetFilePath, targetFilePathConvert)
-    print("Finish downloading videos.")
+    logger.debug(f"Finish downloading videos")
 
     Path(downloadDirPicture).mkdir(parents=True, exist_ok=True)
-    print("Start downloading pictures...")
+    logger.debug(f"Start downloading pictures")
     for file in pictures:
         targetFilePath = generateTargetFilePath(file["FileName"], downloadDirPicture)
 
         if Path(f"{targetFilePath}").is_file():
-            print(f"File already exists: {targetFilePath}")
+            logger.debug(f"File already exists: {targetFilePath}")
+            continue
+
+        if targetFilePath in blacklist:
+            logger.debug(f"File is on the blacklist: {targetFilePath}")
             continue
 
         downloadWithDisconnect(
@@ -320,13 +184,13 @@ def download_all():
         )
 
     cam.close()
-    print("Finish downloading pictures.")
+    logger.debug(f"Finish downloading pictures")
 
 
 def move_cam():
     login()
     direction = os.environ.get("DIRECTION")
-    speed = os.environ.get("SPEED")
+    step = os.environ.get("STEP")
 
     if direction not in [
         "DirectionUp",
@@ -336,48 +200,46 @@ def move_cam():
     ]:
         exit("Please provide direction.")
 
-    if speed == None:
-        speed = 5
+    if step == None:
+        step = 5
     else:
-        speed = int(speed)
-    ptz_step("DirectionUp", step=speed)
+        step = int(step)
+    cam.ptz_step(direction, step=step)
 
 
 def main():
-    action = os.environ.get("ACTION")
-    if action not in ["download", "move"]:
-        print("Please provide an action")
-        exit(1)
-
-    for i in range(10):
-        try:
-            print("Try login")
-            login()
-            break
-        except Exception:
-            print("Camera offline")
-            cam.close()
-
-        if i == 9:
+    init_logger()
+    while True:
+        action = os.environ.get("ACTION")
+        if action not in ["download", "move"]:
+            logger.debug("Please provide an action")
             exit(1)
-        sleep(2)
 
-    if action == "download":
-        download_all()
+        for i in range(10):
+            try:
+                logger.debug("Try login...")
+                login()
+                break
+            except Exception:
+                logger.debug("Camera offline")
+                cam.close()
 
-    if action == "move":
-        move_cam()
+            if i == 9:
+                exit(1)
+            sleep(2)
+
+        if action == "download":
+            download_all()
+
+        if action == "move":
+            move_cam()
+
+        schedule_time = int(os.environ.get("SCHEDULE"))
+        logger.debug(f"Waiting {schedule_time}s for next run...")
+        sleep(schedule_time)
 
 
 if __name__ == "__main__":
     main()
 
-#    cam.send(
-#        1040,
-#        {
-#            "fVideo.Volume": [
-#                {"AudioMode": "Single", "LeftVolume": 0, "RightVolume": 0}
-#            ],
-#            "Name": "fVideo.Volume",
-#        },
-#    )
+# todo add function to dump file list
