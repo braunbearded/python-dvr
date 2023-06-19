@@ -207,34 +207,37 @@ def move_cam():
     cam.ptz_step(direction, step=step)
 
 
+def login_loop(num_retries=10):
+    for i in range(num_retries):
+        try:
+            logger.debug("Try login...")
+            login()
+            return True
+        except Exception:
+            logger.debug("Camera offline")
+            cam.close()
+
+        if i == 9:
+            return False
+        sleep(2)
+
+
 def main():
     init_logger()
+    schedule_time = int(os.environ.get("SCHEDULE"))
     while True:
         action = os.environ.get("ACTION")
         if action not in ["download", "move"]:
             logger.debug("Please provide an action")
             exit(1)
 
-        for i in range(10):
-            try:
-                logger.debug("Try login...")
-                login()
-                break
-            except Exception:
-                logger.debug("Camera offline")
-                cam.close()
+        if login_loop():
+            if action == "download":
+                download_all()
 
-            if i == 9:
-                exit(1)
-            sleep(2)
+            if action == "move":
+                move_cam()
 
-        if action == "download":
-            download_all()
-
-        if action == "move":
-            move_cam()
-
-        schedule_time = int(os.environ.get("SCHEDULE"))
         logger.debug(f"Waiting {schedule_time}s for next run...")
         sleep(schedule_time)
 
