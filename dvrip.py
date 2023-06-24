@@ -197,7 +197,9 @@ class DVRIPCam(object):
         reply = json.loads(data[:-2])
         return reply
 
-    def send_download(self, version, msg, data={}, wait_response=True):
+    def send_custom(
+        self, msg, data={}, wait_response=True, download=False, size=None, version=0
+    ):
         if self.socket is None:
             return {"Ret": 101}
         # self.busy.wait()
@@ -240,7 +242,12 @@ class DVRIPCam(object):
                 msgid,
                 len_data,
             ) = struct.unpack("BB2xII2xHI", data)
-            reply = self.get_file()
+
+            reply = None
+            if download:
+                reply = self.get_file()
+            elif size:
+                reply = self.get_specific_size(size)
             self.busy.release()
             return reply
 
@@ -782,6 +789,9 @@ class DVRIPCam(object):
             data = self.receive_with_timeout(len_data)
             buf.extend(data)
 
+    def get_specific_size(self, size):
+        return self.receive_with_timeout(size)
+
     def reassemble_bin_payload(self, metadata={}):
         def internal_to_type(data_type, value):
             if data_type == 0x1FC or data_type == 0x1FD:
@@ -934,12 +944,14 @@ class DVRIPCam(object):
         )
 
         if data == None or data["Ret"] != 100:
-            print("Could not get files.")
+            self.logger.debug("Could not get files.")
             raise ConnectionRefusedError("Could not get files")
 
         # When no file can be found for the query OPFileQuery is None
         if data["OPFileQuery"] == None:
-            print(f"No files found for this range. Start: {startTime}, End: {endTime}")
+            self.logger.debug(
+                f"No files found for this range. Start: {startTime}, End: {endTime}"
+            )
             return []
 
         # OPFileQuery only returns the first 64 items
@@ -972,15 +984,17 @@ class DVRIPCam(object):
                 max_event["status"] = "run"
 
             if len(result) % 511 == 0 or max_event["status"] == "limit":
-                print("Max number of events reached...")
+                self.logger.debug("Max number of events reached...")
                 if len(result) == max_event["last_num_results"]:
-                    print("No new events since last run. All events queried")
+                    self.logger.debug(
+                        "No new events since last run. All events queried"
+                    )
                     return result
 
                 max_event["status"] = "limit"
                 max_event["last_num_results"] = len(result)
 
-        print(f"Found {len(result)} files.")
+        self.logger.debug(f"Found {len(result)} files.")
         return result
 
     def ptz_step(self, cmd, step=5):
@@ -1019,7 +1033,7 @@ class DVRIPCam(object):
     ):
         Path(targetFilePath).parent.mkdir(parents=True, exist_ok=True)
 
-        print(f"Downloading: {targetFilePath}")
+        self.logger.debug(f"Downloading: {targetFilePath}")
 
         self.send(
             1424,
@@ -1047,8 +1061,7 @@ class DVRIPCam(object):
         if download:
             actionStart = f"Download{actionStart}"
 
-        data = self.send_download(
-            0,
+        data = self.send_custom(
             1420,
             {
                 "Name": "OPPlayBack",
@@ -1068,17 +1081,18 @@ class DVRIPCam(object):
                     "EndTime": endTime,
                 },
             },
+            download=True,
         )
 
         try:
             with open(targetFilePath, "wb") as bin_data:
                 bin_data.write(data)
-        except TypeError as e:
+        except TypeError:
             Path(targetFilePath).unlink(missing_ok=True)
-            print(f"An error occured while downloading {targetFilePath}")
-            return e
+            self.logger.debug(f"An error occured while downloading {targetFilePath}")
+            raise
 
-        print(f"File successfully downloaded: {targetFilePath}")
+        self.logger.debug(f"File successfully downloaded: {targetFilePath}")
 
         actionStop = "Stop"
         if download:
@@ -1107,15 +1121,3 @@ class DVRIPCam(object):
             },
         )
         return None
-
-    def get_battery(self):
-        data = self.send(
-            1040,
-            {
-                "fVideo.Volume": [
-                    {"AudioMode": "Single", "LeftVolume": 0, "RightVolume": 0}
-                ],
-                "Name": "fVideo.Volume",
-            },
-        )
-        return data

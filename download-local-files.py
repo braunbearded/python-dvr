@@ -1,248 +1,163 @@
-from dvrip import DVRIPCam, SomethingIsWrongWithCamera
 from pathlib import Path
-import subprocess
-from time import sleep, localtime, strftime
+from time import sleep
 import os
 import json
 import logging
+from collections import namedtuple
+from solarcam import SolarCam
 
-logger = logging.getLogger(__name__)
+
+# def download_all(self):
+#     blacklist = []
+#
+#     Path(blacklistPath).parent.mkdir(parents=True, exist_ok=True)
+#     if not Path(blacklistPath).exists():
+#         with open(blacklistPath, "w") as filehandle:
+#             json.dump(blacklist, filehandle)
+#
+#     with open(blacklistPath, "r") as filehandle:
+#         blacklist = json.load(filehandle)
+#
+#     if (
+#         convertTo == None
+#         or downloadDirVideo == None
+#         or start == None
+#         or end == None
+#     ):
+#         logger.debug("Please provide download settings")
+#         exit(1)
+#
+#     login()
+#
+#     videos = []
+#     pictures = []
+#     for i in range(10):
+#         try:
+#             videos = cam.list_local_files(start, end, "h264")
+#             break
+#         except ConnectionRefusedError:
+#             logger.debug("Couldnt get file list")
+#
+#         if i == 9:
+#             logger.debug("Couldnt get file list after 10 attemps...exiting")
+#             exit(1)
+#
+#     Path(downloadDirPicture).mkdir(parents=True, exist_ok=True)
+#     logger.debug(f"Start downloading pictures")
+#     for file in pictures:
+#         targetFilePath = generateTargetFilePath(
+#             file["FileName"], downloadDirPicture
+#         )
+#
+#         if Path(f"{targetFilePath}").is_file():
+#             logger.debug(f"File already exists: {targetFilePath}")
+#             continue
+#
+#         if targetFilePath in blacklist:
+#             logger.debug(f"File is on the blacklist: {targetFilePath}")
+#             continue
+#
+#         downloadWithDisconnect(
+#             file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
+#         )
+#
+#     cam.close()
+#     logger.debug(f"Finish downloading pictures")
 
 
 def init_logger():
+    logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
     ch = logging.StreamHandler()
     formatter = logging.Formatter("%(asctime)s - %(levelname)s - %(message)s")
     ch.setFormatter(formatter)
     logger.addHandler(ch)
+    return logger
 
 
-host_ip = os.environ.get("IP_ADDRESS")
-user = os.environ.get("USER")
-password = os.environ.get("PASSWORD")
+def load_config():
+    def config_decoder(config_dict):
+        return namedtuple("X", config_dict.keys())(*config_dict.values())
 
-if host_ip == "" or user == "":
-    logger.debug("Please provide the username and ip address")
-    exit(1)
+    config_path = os.environ.get("CONFIG_PATH")
+    if Path(config_path).exists():
+        with open(config_path, "r") as file:
+            return json.loads(file.read(), object_hook=config_decoder)
 
-cam = DVRIPCam(host_ip, user=user, password=password)
-
-
-def login():
-    if cam.login():
-        logger.debug(f"Success! Connected to {host_ip}")
-    else:
-        logger.debug("Failure. Could not connect.")
-
-
-def generateTargetFilePath(filename, downloadDir, extention=""):
-    fileExtention = Path(filename).suffix
-    filenameSplit = filename.split("/")
-    filenameDisk = f"{filenameSplit[3]}_{filenameSplit[5][:8]}".replace(".", "-")
-    targetPathClean = f"{downloadDir}/{filenameDisk}"
-
-    if extention != "":
-        return f"{targetPathClean}{extention}"
-
-    return f"{targetPathClean}{fileExtention}"
-
-
-def convertFile(sourceFile, targetFile):
-    if (
-        subprocess.run(
-            [
-                "ffmpeg",
-                "-framerate",
-                "15",
-                "-i",
-                sourceFile,
-                "-c",
-                "copy",
-                targetFile,
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        ).returncode
-        != 0
-    ):
-        logger.debug(f"Error converting video. Check {sourceFile}")
-
-    logger.debug(f"File successfully converted: {targetFile}")
-    Path(sourceFile).unlink()
-    logger.debug(f"Orginal file successfully deleted: {sourceFile}")
-
-
-def downloadWithDisconnect(beginTime, endTime, filename, targetPath, sleepTime=2):
-    global cam
-    # Camera disconnects after a couple of minutes
-    while True:
-        if (
-            cam.download_file(
-                beginTime,
-                endTime,
-                filename,
-                targetPath,
-                True,
-            )
-            == None
-        ):
-            break
-
-        logger.debug(f"Camera disconnected. Retring in {sleepTime} seconds...")
-        cam.close()
-        cam = DVRIPCam(host_ip, user=user, password=password)
-        sleep(sleepTime)
-        try:
-            login()
-        except SomethingIsWrongWithCamera:
-            logger.debug(f"Login failed. Retring in {sleepTime} seconds...")
-            sleep(sleepTime)
-
-
-def download_all():
-    convertTo = os.environ.get("VIDEO_TARGET_FORMAT")
-    downloadDirVideo = os.environ.get("DOWNLOAD_DIR_VIDEO")
-    downloadDirPicture = os.environ.get("DOWNLOAD_DIR_PICTURE")
-    start = os.environ.get("DOWNLOAD_START_TIME")
-    end = os.environ.get("DOWNLOAD_END_TIME")
-    blacklistPath = os.environ.get("BLACKLIST_PATH")
-    blacklist = []
-
-    Path(blacklistPath).parent.mkdir(parents=True, exist_ok=True)
-    if not Path(blacklistPath).exists():
-        with open(blacklistPath, "w") as filehandle:
-            json.dump(blacklist, filehandle)
-
-    with open(blacklistPath, "r") as filehandle:
-        blacklist = json.load(filehandle)
-
-    if convertTo == None or downloadDirVideo == None or start == None or end == None:
-        logger.debug("Please provide download settings")
-        exit(1)
-
-    login()
-
-    videos = []
-    pictures = []
-    for i in range(10):
-        try:
-            videos = cam.list_local_files(start, end, "h264")
-            pictures = cam.list_local_files(start, end, "jpg")
-            break
-        except ConnectionRefusedError:
-            logger.debug("Couldnt get file list")
-
-        if i == 9:
-            logger.debug("Couldnt get file list after 10 attemps...exiting")
-            exit(1)
-
-    Path(downloadDirVideo).mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Start downloading videos")
-
-    for file in videos:
-        targetFilePath = generateTargetFilePath(file["FileName"], downloadDirVideo)
-        targetFilePathConvert = generateTargetFilePath(
-            file["FileName"], downloadDirVideo, extention=f"{convertTo}"
-        )
-
-        if Path(f"{targetFilePath}").is_file():
-            logger.debug(f"File already exists: {targetFilePath}")
-            continue
-
-        if Path(f"{targetFilePathConvert}").is_file():
-            logger.debug(f"Converted file already exists: {targetFilePathConvert}")
-            continue
-
-        if targetFilePath in blacklist or targetFilePathConvert in blacklist:
-            logger.debug(
-                f"File is on the blacklist: {targetFilePath}, {targetFilePathConvert}"
-            )
-            continue
-
-        downloadWithDisconnect(
-            file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
-        )
-
-        convertFile(targetFilePath, targetFilePathConvert)
-    logger.debug(f"Finish downloading videos")
-
-    Path(downloadDirPicture).mkdir(parents=True, exist_ok=True)
-    logger.debug(f"Start downloading pictures")
-    for file in pictures:
-        targetFilePath = generateTargetFilePath(file["FileName"], downloadDirPicture)
-
-        if Path(f"{targetFilePath}").is_file():
-            logger.debug(f"File already exists: {targetFilePath}")
-            continue
-
-        if targetFilePath in blacklist:
-            logger.debug(f"File is on the blacklist: {targetFilePath}")
-            continue
-
-        downloadWithDisconnect(
-            file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
-        )
-
-    cam.close()
-    logger.debug(f"Finish downloading pictures")
-
-
-def move_cam():
-    login()
-    direction = os.environ.get("DIRECTION")
-    step = os.environ.get("STEP")
-
-    if direction not in [
-        "DirectionUp",
-        "DirectionDown",
-        "DirectionRight",
-        "DirectionLeft",
-    ]:
-        exit("Please provide direction.")
-
-    if step == None:
-        step = 5
-    else:
-        step = int(step)
-    cam.ptz_step(direction, step=step)
-
-
-def login_loop(num_retries=10):
-    for i in range(num_retries):
-        try:
-            logger.debug("Try login...")
-            login()
-            return True
-        except Exception:
-            logger.debug("Camera offline")
-            cam.close()
-
-        if i == 9:
-            return False
-        sleep(2)
+    return {
+        "host_ip": os.environ.get("IP_ADDRESS"),
+        "user": os.environ.get("USER"),
+        "password": os.environ.get("PASSWORD"),
+        "target_filetype_video": os.environ.get("target_filetype_video"),
+        "download_dir_video": os.environ.get("DOWNLOAD_DIR_VIDEO"),
+        "download_dir_picture": os.environ.get("DOWNLOAD_DIR_PICTURE"),
+        "start": os.environ.get("START"),
+        "end": os.environ.get("END"),
+        "blacklist_path": os.environ.get("BLACKLIST_PATH"),
+        "cooldown": int(os.environ.get("COOLDOWN")),
+    }
 
 
 def main():
-    init_logger()
-    schedule_time = int(os.environ.get("SCHEDULE"))
+    logger = init_logger()
+    config = load_config()
+    start = config.start
+    end = config.end
+    cooldown = config.cooldown
+
+    blacklist = None
+    if Path(config.blacklist_path).exists():
+        with open(config.blacklist_path, "r") as filehandle:
+            blacklist = json.load(filehandle)
+
     while True:
-        action = os.environ.get("ACTION")
-        if action not in ["download", "move"]:
-            logger.debug("Please provide an action")
-            exit(1)
+        solarCam = SolarCam(config.host_ip, config.user, config.password, logger)
 
-        if login_loop():
-            if action == "download":
-                download_all()
+        try:
+            solarCam.login()
+            print("after login")
 
-            if action == "move":
-                move_cam()
+            battery = solarCam.get_battery()
+            logger.debug(f"Current battery status: {battery}")
+            storage = solarCam.get_storage()[0]
+            logger.debug(f"Current storage status: {storage}")
 
-        logger.debug(f"Waiting {schedule_time}s for next run...")
-        sleep(schedule_time)
+            pics = solarCam.get_local_files(start, end, "jpg")
+            if pics:
+                Path(config.download_dir_picture).parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                solarCam.save_files(
+                    config.download_dir_picture, pics, blacklist=blacklist
+                )
+
+            videos = solarCam.get_local_files(start, end, "h264")
+            if videos:
+                Path(config.download_dir_video).parent.mkdir(
+                    parents=True, exist_ok=True
+                )
+                solarCam.save_files(
+                    config.download_dir_video,
+                    videos,
+                    blacklist=blacklist,
+                    target_filetype=config.target_filetype_video,
+                )
+        except ConnectionRefusedError:
+            logger.debug(f"Connection could not be established or got disconnected")
+        except TypeError as e:
+            print(e)
+            logger.debug(f"Error while downloading a file")
+
+        logger.debug(f"Sleeping for {cooldown} seconds...")
+        sleep(cooldown)
 
 
 if __name__ == "__main__":
     main()
 
 # todo add function to dump file list
+# todo add flask api for moving cam
+# todo show current stream
+# todo show battery on webinterface and write it so mqtt topic
+# todo change camera name
+# todo update camera clock
