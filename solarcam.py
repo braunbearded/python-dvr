@@ -38,6 +38,9 @@ class SolarCam:
                 )
             sleep(2)
 
+    def logout(self):
+        self.cam.close()
+
     def get_local_files(self, start, end, filetype):
         return self.cam.list_local_files(start, end, filetype)
 

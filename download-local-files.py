@@ -115,12 +115,13 @@ def main():
 
         try:
             solarCam.login()
-            print("after login")
 
             battery = solarCam.get_battery()
             logger.debug(f"Current battery status: {battery}")
             storage = solarCam.get_storage()[0]
             logger.debug(f"Current storage status: {storage}")
+
+            sleep(5)  # sleep some seconds so camera can get ready
 
             pics = solarCam.get_local_files(start, end, "jpg")
             if pics:
@@ -142,12 +143,15 @@ def main():
                     blacklist=blacklist,
                     target_filetype=config.target_filetype_video,
                 )
+
+            solarCam.logout()
         except ConnectionRefusedError:
             logger.debug(f"Connection could not be established or got disconnected")
         except TypeError as e:
             print(e)
             logger.debug(f"Error while downloading a file")
-
+        except KeyError:
+            logger.debug(f"Error while getting the file list")
         logger.debug(f"Sleeping for {cooldown} seconds...")
         sleep(cooldown)
 
@@ -158,6 +162,6 @@ if __name__ == "__main__":
 # todo add function to dump file list
 # todo add flask api for moving cam
 # todo show current stream
-# todo show battery on webinterface and write it so mqtt topic
+# todo show battery on webinterface and write it to mqtt topic
 # todo change camera name
 # todo update camera clock
