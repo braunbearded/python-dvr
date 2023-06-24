@@ -7,64 +7,6 @@ from collections import namedtuple
 from solarcam import SolarCam
 
 
-# def download_all(self):
-#     blacklist = []
-#
-#     Path(blacklistPath).parent.mkdir(parents=True, exist_ok=True)
-#     if not Path(blacklistPath).exists():
-#         with open(blacklistPath, "w") as filehandle:
-#             json.dump(blacklist, filehandle)
-#
-#     with open(blacklistPath, "r") as filehandle:
-#         blacklist = json.load(filehandle)
-#
-#     if (
-#         convertTo == None
-#         or downloadDirVideo == None
-#         or start == None
-#         or end == None
-#     ):
-#         logger.debug("Please provide download settings")
-#         exit(1)
-#
-#     login()
-#
-#     videos = []
-#     pictures = []
-#     for i in range(10):
-#         try:
-#             videos = cam.list_local_files(start, end, "h264")
-#             break
-#         except ConnectionRefusedError:
-#             logger.debug("Couldnt get file list")
-#
-#         if i == 9:
-#             logger.debug("Couldnt get file list after 10 attemps...exiting")
-#             exit(1)
-#
-#     Path(downloadDirPicture).mkdir(parents=True, exist_ok=True)
-#     logger.debug(f"Start downloading pictures")
-#     for file in pictures:
-#         targetFilePath = generateTargetFilePath(
-#             file["FileName"], downloadDirPicture
-#         )
-#
-#         if Path(f"{targetFilePath}").is_file():
-#             logger.debug(f"File already exists: {targetFilePath}")
-#             continue
-#
-#         if targetFilePath in blacklist:
-#             logger.debug(f"File is on the blacklist: {targetFilePath}")
-#             continue
-#
-#         downloadWithDisconnect(
-#             file["BeginTime"], file["EndTime"], file["FileName"], targetFilePath
-#         )
-#
-#     cam.close()
-#     logger.debug(f"Finish downloading pictures")
-
-
 def init_logger():
     logger = logging.getLogger(__name__)
     logger.setLevel(logging.DEBUG)
@@ -121,6 +63,10 @@ def main():
             storage = solarCam.get_storage()[0]
             logger.debug(f"Current storage status: {storage}")
 
+            logger.debug(f"Syncing time...")
+            solarCam.set_time()  # setting it to system clock
+            logger.debug(f"Camera time is now {solarCam.get_time()}")
+
             sleep(5)  # sleep some seconds so camera can get ready
 
             pics = solarCam.get_local_files(start, end, "jpg")
@@ -164,4 +110,3 @@ if __name__ == "__main__":
 # todo show current stream
 # todo show battery on webinterface and write it to mqtt topic
 # todo change camera name
-# todo update camera clock

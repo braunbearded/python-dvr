@@ -3,6 +3,7 @@ from dvrip import DVRIPCam, SomethingIsWrongWithCamera
 from pathlib import Path
 import subprocess
 import json
+from datetime import datetime
 
 
 class SolarCam:
@@ -40,6 +41,14 @@ class SolarCam:
 
     def logout(self):
         self.cam.close()
+
+    def get_time(self):
+        return self.cam.get_time()
+
+    def set_time(self, time=None):
+        if time is None:
+            time = datetime.now()
+        return self.cam.set_time(time=time)
 
     def get_local_files(self, start, end, filetype):
         return self.cam.list_local_files(start, end, filetype)
