@@ -37,6 +37,9 @@ def load_config():
         "end": os.environ.get("END"),
         "blacklist_path": os.environ.get("BLACKLIST_PATH"),
         "cooldown": int(os.environ.get("COOLDOWN")),
+        "dump_local_files": (
+            os.environ.get("DUMP_LOCAL_FILES").lower() in ["true", "1", "y", "yes"]
+        ),
     }
 
 
@@ -71,10 +74,6 @@ def main():
 
             pics = solarCam.get_local_files(start, end, "jpg")
 
-            # solarCam.dump_local_files(
-            #    pics, config.blacklist_path, config.download_dir_picture
-            # )
-
             if pics:
                 Path(config.download_dir_picture).parent.mkdir(
                     parents=True, exist_ok=True
@@ -84,12 +83,6 @@ def main():
                 )
 
             videos = solarCam.get_local_files(start, end, "h264")
-            # solarCam.dump_local_files(
-            #    videos,
-            #    config.blacklist_path,
-            #    config.download_dir_picture,
-            #    target_filetype=config.target_filetype_video,
-            # )
             if videos:
                 Path(config.download_dir_video).parent.mkdir(
                     parents=True, exist_ok=True
@@ -99,6 +92,18 @@ def main():
                     videos,
                     blacklist=blacklist,
                     target_filetype=config.target_filetype_video,
+                )
+
+            if config.dump_local_files:
+                logger.debug(f"Dumping local files...")
+                solarCam.dump_local_files(
+                    videos,
+                    config.blacklist_path,
+                    config.download_dir_video,
+                    target_filetype=config.target_filetype_video,
+                )
+                solarCam.dump_local_files(
+                    pics, config.blacklist_path, config.download_dir_picture
                 )
 
             solarCam.logout()
