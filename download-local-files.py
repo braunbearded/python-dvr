@@ -49,8 +49,8 @@ def main():
 
     blacklist = None
     if Path(config.blacklist_path).exists():
-        with open(config.blacklist_path, "r") as filehandle:
-            blacklist = json.load(filehandle)
+        with open(config.blacklist_path, "r") as file:
+            blacklist = [line.rstrip() for line in file]
 
     while True:
         solarCam = SolarCam(config.host_ip, config.user, config.password, logger)
@@ -70,6 +70,11 @@ def main():
             sleep(5)  # sleep some seconds so camera can get ready
 
             pics = solarCam.get_local_files(start, end, "jpg")
+
+            # solarCam.dump_local_files(
+            #    pics, config.blacklist_path, config.download_dir_picture
+            # )
+
             if pics:
                 Path(config.download_dir_picture).parent.mkdir(
                     parents=True, exist_ok=True
@@ -79,6 +84,12 @@ def main():
                 )
 
             videos = solarCam.get_local_files(start, end, "h264")
+            # solarCam.dump_local_files(
+            #    videos,
+            #    config.blacklist_path,
+            #    config.download_dir_picture,
+            #    target_filetype=config.target_filetype_video,
+            # )
             if videos:
                 Path(config.download_dir_video).parent.mkdir(
                     parents=True, exist_ok=True
@@ -105,7 +116,6 @@ def main():
 if __name__ == "__main__":
     main()
 
-# todo add function to dump file list
 # todo add flask api for moving cam
 # todo show current stream
 # todo show battery on webinterface and write it to mqtt topic

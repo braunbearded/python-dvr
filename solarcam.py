@@ -53,6 +53,22 @@ class SolarCam:
     def get_local_files(self, start, end, filetype):
         return self.cam.list_local_files(start, end, filetype)
 
+    def dump_local_files(
+        self, files, blacklist_path, download_dir, target_filetype=None
+    ):
+        with open(f"{blacklist_path}.dmp", "a") as outfile:
+            for file in files:
+                target_file_path = self.generateTargetFilePath(
+                    file["FileName"], download_dir
+                )
+                outfile.write(f"{target_file_path}\n")
+
+                if target_filetype:
+                    target_file_path_convert = self.generateTargetFilePath(
+                        file["FileName"], download_dir, extention=f"{target_filetype}"
+                    )
+                    outfile.write(f"{target_file_path_convert}\n")
+
     def generateTargetFilePath(self, filename, downloadDir, extention=""):
         fileExtention = Path(filename).suffix
         filenameSplit = filename.split("/")
@@ -67,18 +83,10 @@ class SolarCam:
     def convertFile(self, sourceFile, targetFile):
         if (
             subprocess.run(
-                [
-                    "ffmpeg",
-                    "-framerate",
-                    "15",
-                    "-i",
-                    sourceFile,
-                    "-c",
-                    "copy",
-                    targetFile,
-                ],
+                f"ffmpeg -framerate 15 -i {sourceFile} -b:v 1M -c:v libvpx-vp9 -c:a libopus {targetFile}",
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL,
+                shell=True,
             ).returncode
             != 0
         ):
@@ -125,12 +133,17 @@ class SolarCam:
                     )
                     continue
 
+            self.logger.debug(f"Downloading {target_file_path}...")
             self.cam.download_file(
                 file["BeginTime"], file["EndTime"], file["FileName"], target_file_path
             )
+            self.logger.debug(f"Finished downloading {target_file_path}...")
 
             if target_file_path_convert:
+                self.logger.debug(f"Converting {target_file_path_convert}...")
                 self.convertFile(target_file_path, target_file_path_convert)
+                self.logger.debug(f"Finished converting {target_file_path_convert}.")
+
         self.logger.debug(f"Finish downloading files")
 
     def move_cam(self, direction, step=5):
