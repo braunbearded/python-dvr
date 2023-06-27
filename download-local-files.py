@@ -114,6 +114,8 @@ def main():
             logger.debug(f"Error while downloading a file")
         except KeyError:
             logger.debug(f"Error while getting the file list")
+        except UnicodeDecodeError:
+            logger.debug(f"Error while getting battery status")
         logger.debug(f"Sleeping for {cooldown} seconds...")
         sleep(cooldown)
 
