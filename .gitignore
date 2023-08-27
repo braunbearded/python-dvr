@@ -1,3 +1,8 @@
 *.pyc
 *.old
 .DS_Store
+blacklist.json
+config.json
+pics/
+run.sh
+videos/
