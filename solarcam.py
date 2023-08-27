@@ -190,12 +190,34 @@ class SolarCam:
         )
 
     def get_battery(self):
+        data = ""
+        json_data = ""
+
         data = self.cam.send_custom(
             1610,
             {"Name": "OPTUpData", "OPTUpData": {"UpLoadDataType": 5}},
             size=260,
-        )[87:-2].decode("utf-8")
-        json_data = json.loads(data)
+        )
+
+        try:
+            json_data = json.loads(data[87:-2].decode("utf-8"))
+        except json.decoder.JSONDecodeError:
+            self.logger.debug(
+                f"An error occurred while parsing battery information. Try next method..."
+            )
+
+        if json_data == "":
+            try:
+                json_data = json.loads(data[87:].decode("utf-8"))
+            except json.decoder.JSONDecodeError:
+                self.logger.debug(
+                    f"Couldnt get battery information. Using default values."
+                )
+                return {
+                    "BatteryPercent": -1,
+                    "Charging": "unknown",
+                }
+
         return {
             "BatteryPercent": json_data["Dev.ElectCapacity"]["percent"],
             "Charging": json_data["Dev.ElectCapacity"]["electable"],
@@ -205,6 +227,16 @@ class SolarCam:
         # get available storage in gb
         storage_result = []
         data = self.cam.send(1020, {"Name": "StorageInfo"})
+        if not data:
+            return [
+                {
+                    "Storage": -1,
+                    "Partition": -1,
+                    "RemainingSpace": -1,
+                    "TotalSpace": -1,
+                }
+            ]
+
         for storage_index, storage in enumerate(data["StorageInfo"]):
             for partition_index, partition in enumerate(storage["Partition"]):
                 s = {
